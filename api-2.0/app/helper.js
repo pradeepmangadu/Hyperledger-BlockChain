@@ -7,14 +7,9 @@ const fs = require('fs');
 
 const util = require('util');
 
-const NodeCouchDb = require('node-couchdb');
+const nano = require('nano')('http://localhost:5984')
+const nanodb = nano.use('org1_wallet');
  
-// node-couchdb instance with default options
-const couch = new NodeCouchDb({
-    host: 'localhost',
-    protocol: 'http',
-    port: 5984 
-});
 
 const getCCP = async (org) => {
     let ccpPath;
@@ -197,10 +192,10 @@ const getRegisteredUser = async (username, userOrg, isJson,userData) => {
 
     let document;
 
-    document = await couch.get(walletName, username)
+    document = await nanodb.get(username)
     
     if(document){
-        const updateResponse = await couch.update(walletName, {...document.data,...userData})
+        const updateResponse = await nanodb.insert({...document,...userData},username)
         if(updateResponse){
             var response = {
                 success: true,
@@ -232,22 +227,9 @@ const isUserRegistered = async  (username, password, userType, userOrg) => {
     //     return true
     // }
     // return false
-
-    const dbName = "org1_wallet";
-    const mangoQuery = {
-    selector: {
-        "loginId": {
-            "$eq": username
-          }
-    }
-    };
-    const parameters = {};
-
     try{
-    const search = await couch.mango(dbName, mangoQuery, parameters)
-    if(search.data.docs.length > 0){
-        const existingData = search.data.docs[0]
-        if(existingData.loginId === username && existingData.password === password && existingData.userType === userType){
+      const existingData = await getUserByUserName(username)
+        if(existingData && (existingData.loginId === username && existingData.password === password && existingData.userType === userType)){
             var response = {
                 success : true,
                  error   : null
@@ -260,8 +242,7 @@ const isUserRegistered = async  (username, password, userType, userOrg) => {
              }
              return response;
         }
-    } 
-    
+
     }
     catch(error){
         console.log(error)
@@ -272,6 +253,129 @@ const isUserRegistered = async  (username, password, userType, userOrg) => {
         return response;
     }
     }
+
+const getUserByUserName = async  (username) => {
+    const dbName = "org1_wallet";
+    const mangoQuery = {
+    selector: {
+        "loginId": {
+            "$eq": username
+          }
+    }
+    };
+
+    let user = null;
+
+    try{
+        const search = await nanodb.find(mangoQuery)
+        if(search.docs.length > 0){
+            user = search.docs[0]
+       }
+      }catch(error){
+          console.log(error)
+    }
+    return user;     
+}
+
+const getUserImage = async (username)=>{
+    let response;
+    try{
+        const d = await nanodb.attachment.get(username, 'ProfilePic.png')
+        var image = Buffer.from(d).toString('base64');
+         response = {
+            image : image,
+            error : null
+         }   
+    }
+    catch(error){
+    console.log(error)
+      response = {
+        image : null,
+        error :error
+     } 
+    }
+	
+    return response 
+}
+
+
+const uploadImageData = async  (walletName,username, data) => {
+    var fileName = 'ProfilePic.png'
+    const user = await getUserByUserName(username)
+    if(user){
+    try{
+       const uploadStatus = await  nanodb.attachment.insert(user._id, fileName, Buffer.from(data, "base64"), 'image/png',
+       { rev: user._rev })
+       if(uploadStatus.ok){
+        var response = {
+            success : true,
+             error  : null
+         }
+         return response;
+    }else{
+        var response = {
+            success : false,
+             error  : 'Unable to Update'
+         }
+         return response;
+    }
+    }
+    catch(error){
+        var response = {
+            success : false,
+             error  : error
+         }
+         return response
+    }
+}else{
+    var response = {
+        success : false,
+         error  : 'No User Found to Update'
+     }
+     return response
+}
+
+}   
+
+
+const uploadReportData = async  (walletName,username,data,fileName,fileType) => {
+    const user = await getUserByUserName(username)
+    if(user){
+    try{
+       const uploadStatus = await  nanodb.attachment.insert(user._id, fileName, Buffer.from(data, "base64"), fileType,
+       { rev: user._rev })
+       if(uploadStatus.ok){
+        var response = {
+            success : true,
+             error  : null
+         }
+         return response;
+    }else{
+        var response = {
+            success : false,
+             error  : 'Unable to Update'
+         }
+         return response;
+    }
+    }
+    catch(error){
+        var response = {
+            success : false,
+             error  : error
+         }
+         return response
+    }
+}else{
+    var response = {
+        success : false,
+         error  : 'No User Found to Update'
+     }
+     return response
+}
+
+}   
+
+
 
 
 const getCaInfo = async (org, ccp) => {
@@ -346,6 +450,9 @@ module.exports = {
     getCCP: getCCP,
     getWalletPath: getWalletPath,
     getRegisteredUser: getRegisteredUser,
-    isUserRegistered: isUserRegistered
-
+    isUserRegistered: isUserRegistered,
+    getUserByUserName: getUserByUserName,
+    getUserImage: getUserImage,
+    uploadReportData :uploadReportData,
+    uploadImageData:uploadImageData,
 }

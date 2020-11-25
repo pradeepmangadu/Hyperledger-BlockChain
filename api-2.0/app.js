@@ -13,6 +13,8 @@ const jwt = require('jsonwebtoken');
 const bearerToken = require('express-bearer-token');
 const cors = require('cors');
 const constants = require('./config/constants.json')
+// var multer  = require('multer')
+// var upload = multer()
 
 const host = process.env.HOST || constants.host;
 const port = process.env.PORT || constants.port;
@@ -23,11 +25,20 @@ const invoke = require('./app/invoke')
 const qscc = require('./app/qscc')
 const query = require('./app/query')
 
+const NodeCouchDb = require('node-couchdb');
+ 
+// node-couchdb instance with default options
+const couch = new NodeCouchDb({
+    host: 'localhost',
+    protocol: 'http',
+    port: 5984 
+});
+
 app.options('*', cors());
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({
-    extended: false
+    extended: true
 }));
 // set secret variable
 app.set('secret', 'thisismysecret');
@@ -46,7 +57,8 @@ app.use((req, res, next) => {
     if (req.originalUrl.indexOf('/users') >= 0 || req.originalUrl.indexOf('/users/login') >= 0 || req.originalUrl.indexOf('/validateCaptcha') >= 0 ) {
         return next();
     }
-    var token = req.token;
+    var bearerToken = req.headers.authorization
+    var token = bearerToken.substring(7,bearerToken.length+1);
     jwt.verify(token, app.get('secret'), (err, decoded) => {
         if (err) {
             console.log(`Error ================:${err}`)
@@ -121,7 +133,7 @@ app.post('/users', async function (req, res) {
 // Login and get jwt
 app.post('/users/login', async function (req, res) {
     var username = req.body.username;
-    var orgName = "Org1";
+    var orgName = req.body.orgName ? req.body.orgName:"Org1";
     var password = req.body.password;
     var userType= req.body.userType;
     logger.debug('End point : /users');
@@ -142,6 +154,9 @@ app.post('/users/login', async function (req, res) {
         orgName: orgName
     }, app.get('secret'));
 
+    console.log(new Date().getTime());
+    console.log(Date.now());
+
     let isUserRegistered = await helper.isUserRegistered(username, password, userType, orgName);
 
     if (isUserRegistered.success) {
@@ -149,6 +164,7 @@ app.post('/users/login', async function (req, res) {
             { 
             success: true,
             userId  : username,
+            userType :userType,
             token: token,
             expiresIn: constants.jwt_expiretime
         });
@@ -184,6 +200,94 @@ app.post('/validateCaptcha', async function (req, res) {
     }
 
 })
+
+
+
+app.post('/uploadImage', async function (req, res) {
+    var username = req.body.username;
+    var orgName = req.body.orgName ? req.body.orgName:"Org1";
+    var walletName = (orgName+'_wallet').toLowerCase()
+    var fileName = req.body.fileName;
+    var file = req.body.file
+    let uploadStatus = await helper.uploadImageData(walletName,username,file)
+    console.log(uploadStatus)
+    return res.json(uploadStatus)
+})
+
+app.post('/uploadFile', async function (req, res) {
+    var username = req.body.username;
+    var orgName = req.body.orgName ? req.body.orgName:"Org1";
+    var walletName = (orgName+'_wallet').toLowerCase()
+    var fileName = req.body.fileName;
+    var file = req.body.file;
+    var fileType = req.body.fileType;
+    let uploadStatus = await helper.uploadReportData(walletName,username,file,fileName,fileType)
+    console.log(uploadStatus)
+    return res.json(uploadStatus)
+})
+
+
+app.get('/getUserImage', async function (req, res) {
+    var username = req.query.username;
+    let response = await helper.getUserImage(username)
+    
+    return res.json(response); 
+})
+
+
+app.post('/channels/:channelName/chaincodes/:chaincodeName/uploadFile', async function (req, res) {
+    try {
+        logger.debug('==================== INVOKE ON CHAINCODE ==================');
+        var peers = req.body.peers;
+        var chaincodeName = req.params.chaincodeName;
+        var channelName = req.params.channelName;
+        var fcn = req.body.fcn;
+        var args = req.body.args;
+        var transient = req.body.transient;
+        var file = req.boby.file
+
+        console.log(`Transient data is ;${transient}`)
+        logger.debug('channelName  : ' + channelName);
+        logger.debug('chaincodeName : ' + chaincodeName);
+        logger.debug('fcn  : ' + fcn);
+        logger.debug('args  : ' + args);
+        if (!chaincodeName) {
+            res.json(getErrorMessage('\'chaincodeName\''));
+            return;
+        }
+        if (!channelName) {
+            res.json(getErrorMessage('\'channelName\''));
+            return;
+        }
+        if (!fcn) {
+            res.json(getErrorMessage('\'fcn\''));
+            return;
+        }
+        if (!args) {
+            res.json(getErrorMessage('\'args\''));
+            return;
+        }
+
+        let message = await invoke.invokeTransaction(channelName, chaincodeName, fcn, args, req.username, req.orgname, transient);
+        console.log(`message result is : ${message}`)
+
+        const response_payload = {
+            result: message,
+            error: null,
+            errorData: null
+        }
+        res.send(response_payload);
+
+    } catch (error) {
+        const response_payload = {
+            result: null,
+            error: error.name,
+            errorData: error.message
+        }
+        res.send(response_payload)
+    }
+});
+
 
 // Invoke transaction on chaincode on target peers
 app.post('/channels/:channelName/chaincodes/:chaincodeName', async function (req, res) {
